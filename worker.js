@@ -36,10 +36,10 @@ async function pollQueue() {
 
   const params = {
     QueueUrl: queueUrl, // Replace with SQS url
-    MaxNumberOfMessage: 1,
+    MaxNumberOfMessages: 1,
     WaitTimeSeconds: 20 // Long polling
   }
-
+  console.log('Checking for message in queue...');
   sqs.receiveMessage(params, (err, data) => {
     if (err) {
       console.log("Receive Error", err);
@@ -51,38 +51,43 @@ async function pollQueue() {
   });
 }
 
-async function processMessage(message) {
+async function processMessage(message, receiptHandle) {
   // Implement your logic to download, compress, and upload file
   // After successful operation, delete the message from the queue
+  console.log('Message found. Processing now...');
+
   const folderKey = message.folderKey;
   const fileKeys = message.fileKeys;
   const tempFolderName = `/tmp/${folderKey}`;
 
   // Download file from S3
+  console.log('Downloading files from S3...');
   fs.mkdirSync(tempFolderName, { recursive: true });
 
   const downloadPromises = fileKeys.map(async (fileKey) => {
-    const downloadUrl = `https://n11069449-compress-store.s3.amazonaws.com/${fileKey}`;
-    const response = await axios({
-      url: downloadUrl,
-      method: 'GET',
-      responseType: 'stream'
-    });
+  const tempFileName = path.join(tempFolderName, path.basename(fileKey));
 
-    const readStream = response.data;
-    const tempFileName = path.join(tempFolderName, path.basename(fileKey));
-    const writeStream = fs.createWriteStream(tempFileName);
+  const s3Params = {
+    Bucket: 'n11069449-compress-store',
+    Key: fileKey
+  };
 
-    return new Promise((resolve, reject) => {
-      readStream.pipe(writeStream);
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-    });
+  const writeStream = fs.createWriteStream(tempFileName);
+
+  return new Promise((resolve, reject) => {
+    s3.getObject(s3Params).createReadStream()
+      .pipe(writeStream)
+      .on('finish', resolve)
+      .on('error', reject);
   });
+});
+
 
   await Promise.all(downloadPromises);
+  console.log('Download complete.');
 
   // Compress file using pigz
+  console.log('Compressing downloaded files...');
   const compressedFolderName = `${tempFolderName}.tar.gz`;
 
   await new Promise((resolve, reject) => {
@@ -94,8 +99,10 @@ async function processMessage(message) {
       resolve();
     });
   });
+  console.log('Compression complete');
 
   // Upload compressed file back to S3
+  console.log('Uploading files back to S3...');
   const compressedReadStream = fs.createReadStream(compressedFolderName);
 
   const uploadParams = {
@@ -114,10 +121,12 @@ async function processMessage(message) {
       resolve();
     });
   });
+  console.log('Upload complete');
 
   // Delete message from queue
+  console.log('Deleting message from queue and local files...');
   const deleteParams = {
-    QueueUrl: 'url',
+    QueueUrl: queueUrl,
     ReceiptHandle: receiptHandle
   };
 
@@ -125,9 +134,16 @@ async function processMessage(message) {
     if (err) {
       console.log("Delete Error", err);
     } else {
-      console.log("Message Deleted", data);
+      // console.log("Message Deleted", data);
+      console.log('Message deleted');
     }
   });
+
+  // Delete locally stored files
+  fs.rmdirSync(tempFolderName, {recursive: true});
+  console.log('Local files deleted.');
+  console.log('Processing is complete.');
+
 }
 
 getQueueUrl().then(url => {
