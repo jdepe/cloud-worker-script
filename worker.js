@@ -151,10 +151,30 @@ async function processMessage(message, receiptHandle) {
   console.log('Processing is complete.');
 }
 
+async function startWorker(workerId) {
+  console.log(`Worker ${workerId} started`);
+  while (true) {
+    try {
+      await pollQueue();
+    } catch (error) {
+      console.error(`Worker ${workerId} encountered an error:`, error);
+
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+}
+
 getQueueUrl().then(url => {
-    queueUrl = url;
-    setInterval(pollQueue, 3000);
+  queueUrl = url;
 })
 .catch(error => {
-  console.error('Failed to get SQS queue URL', error);
+console.error('Failed to get SQS queue URL', error);
 });
+
+const maxWorkers = 5;
+
+for (let i = 0; i < maxWorkers; i++) {
+  startWorker(i).catch(error => {
+    console.error(`Worker ${i} failed to start:`, error);
+  });
+}
