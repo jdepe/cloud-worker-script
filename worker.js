@@ -37,25 +37,28 @@ async function getQueueUrl() {
 }
 
 async function pollQueue() {
-  // Check if url is saved otherwise retrieve it
   if (!queueUrl) {
     queueUrl = await getQueueUrl();
   }
 
   const params = {
-    QueueUrl: queueUrl, // Replace with SQS url
-    MaxNumberOfMessages: 1,
+    QueueUrl: queueUrl,
+    MaxNumberOfMessages: 5, // Fetch up to 5 messages at a time
     WaitTimeSeconds: 20 // Long polling
-  }
-  console.log('Checking for message in queue...');
-  sqs.receiveMessage(params, (err, data) => {
-    if (err) {
-      console.log("Receive Error", err);
-    } else if (data.Messages) {
-      const message = JSON.parse(data.Messages[0].Body);
-      const receiptHandle = data.Messages[0].ReceiptHandle;
-      processMessage(message, receiptHandle).catch(console.error);
-    }
+  };
+
+  return new Promise((resolve, reject) => {
+    sqs.receiveMessage(params, (err, data) => {
+      if (err) {
+        console.error("Receive Error", err);
+        return reject(err);
+      }
+      if (data.Messages) {
+        resolve(data.Messages);
+      } else {
+        resolve([]);
+      }
+    });
   });
 }
 
@@ -84,10 +87,10 @@ async function processMessage(message, receiptHandle) {
 
     return new Promise((resolve, reject) => {
       s3.getObject(s3Params)
-      .createReadStream()
-      .pipe(writeStream)
-      .on('finish', resolve)
-      .on('error', reject);
+        .createReadStream()
+        .pipe(writeStream)
+        .on('finish', resolve)
+        .on('error', reject);
     });
   });
 
@@ -100,7 +103,7 @@ async function processMessage(message, receiptHandle) {
   const compressedFolderName = `${tempFolderName}.tar.gz`;
 
   await new Promise((resolve, reject) => {
-    exec(`tar -cf - -C ${path.dirname(tempFolderName)} ${path.basename(tempFolderName)} | pigz -9 > ${compressedFolderName}`, (error) => {
+    exec(`tar -cf - -C "${path.dirname(tempFolderName)}" "${path.basename(tempFolderName)}" | pigz -9 > "${compressedFolderName}"`, (error) => {
       if (error) {
         console.error(`Compression Error: ${error}`);
         return reject(error);
@@ -149,35 +152,54 @@ async function processMessage(message, receiptHandle) {
   });
 
   // Delete locally stored files
-  fs.rmSync(tempFolderName, { recursive: true, force: true });
-  console.log('Local files deleted.');
+  try {
+    fs.rmSync(tempFolderName, { recursive: true, force: true });
+    console.log('Local files deleted.');
+  } catch (err) {
+    console.error(`Error deleting temporary folder: ${err}`);
+  }
+
+  // Delete compressed files
+  try {
+    fs.unlinkSync(compressedFolderName);
+    console.log('Compressed file deleted.');
+  }   catch (err) {
+    console.error(`Error deleting compressed file: ${err}`);
+  }
+  
   console.log('Processing is complete.');
 }
 
-async function startWorker(workerId) {
-  console.log(`Worker ${workerId} started`);
+async function startWorker() {
+  console.log(`Worker started`);
   while (true) {
     try {
-      await pollQueue();
+      console.log(`Worker polling for messages...`);
+      const messages = await pollQueue();
+      if (messages.length > 0) {
+        console.log(`Worker received ${messages.length} messages. Processing...`);
+        // Process all messages concurrently
+        await Promise.all(messages.map(message => {
+          const body = JSON.parse(message.Body);
+          const receiptHandle = message.ReceiptHandle;
+          return processMessage(body, receiptHandle);
+        }));
+      }
     } catch (error) {
-      console.error(`Worker ${workerId} encountered an error:`, error);
-
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      console.error(`Worker encountered an error:`, error);
     }
+    // Optional: introduce a short delay or backoff strategy if needed
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 }
 
 getQueueUrl().then(url => {
   queueUrl = url;
 })
-.catch(error => {
-console.error('Failed to get SQS queue URL', error);
-});
-
-const maxWorkers = 5;
-
-for (let i = 0; i < maxWorkers; i++) {
-  startWorker(i).catch(error => {
-    console.error(`Worker ${i} failed to start:`, error);
+  .catch(error => {
+    console.error('Failed to get SQS queue URL', error);
   });
-}
+
+  startWorker().catch(error => {
+    console.error(`Worker failed to start:`, error);
+  });
