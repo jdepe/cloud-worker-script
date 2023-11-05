@@ -4,9 +4,6 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// REMOVE BEFORE SUBMISSION (+ take out dotenv from package.json + package-lock.json)
-require('dotenv').config();
-
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
