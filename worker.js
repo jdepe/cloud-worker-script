@@ -4,7 +4,15 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-AWS.config.update({ region: 'ap-southeast-2' });
+// REMOVE BEFORE SUBMISSION (+ take out dotenv from package.json + package-lock.json)
+require('dotenv').config();
+
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  sessionToken: process.env.AWS_SESSION_TOKEN,
+  region: "ap-southeast-2",
+});
 
 const sqs = new AWS.SQS();
 const s3 = new AWS.S3();
@@ -52,7 +60,7 @@ async function pollQueue() {
 }
 
 async function processMessage(message, receiptHandle) {
-  // Implement your logic to download, compress, and upload file
+  // Download, compress then upload the file back to S3
   // After successful operation, delete the message from the queue
   console.log('Message found. Processing now...');
 
@@ -65,22 +73,23 @@ async function processMessage(message, receiptHandle) {
   fs.mkdirSync(tempFolderName, { recursive: true });
 
   const downloadPromises = fileKeys.map(async (fileKey) => {
-  const tempFileName = path.join(tempFolderName, path.basename(fileKey));
+    const tempFileName = path.join(tempFolderName, path.basename(fileKey));
 
-  const s3Params = {
-    Bucket: 'n11069449-compress-store',
-    Key: fileKey
-  };
+    const s3Params = {
+      Bucket: 'n11069449-compress-store',
+      Key: fileKey
+    };
 
-  const writeStream = fs.createWriteStream(tempFileName);
+    const writeStream = fs.createWriteStream(tempFileName);
 
-  return new Promise((resolve, reject) => {
-    s3.getObject(s3Params).createReadStream()
+    return new Promise((resolve, reject) => {
+      s3.getObject(s3Params)
+      .createReadStream()
       .pipe(writeStream)
       .on('finish', resolve)
       .on('error', reject);
+    });
   });
-});
 
 
   await Promise.all(downloadPromises);
@@ -140,15 +149,15 @@ async function processMessage(message, receiptHandle) {
   });
 
   // Delete locally stored files
-  fs.rmdirSync(tempFolderName, {recursive: true});
+  fs.rmSync(tempFolderName, { recursive: true, force: true });
   console.log('Local files deleted.');
   console.log('Processing is complete.');
-
 }
 
 getQueueUrl().then(url => {
-  queueUrl = url;
-  setInterval(pollQueue, 3000);
-}).catch(error => {
+    queueUrl = url;
+    setInterval(pollQueue, 3000);
+})
+.catch(error => {
   console.error('Failed to get SQS queue URL', error);
 });
