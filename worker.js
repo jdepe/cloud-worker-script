@@ -63,15 +63,14 @@ async function processMessage(message, receiptHandle) {
   // Download, compress then upload the file back to S3
   // After successful operation, delete the message from the queue
   console.log('Message found. Processing now...');
+  const { folderKey, fileKeys, uniqueId } = message;
+  const tempFolderBase = `/tmp/${uniqueId}`;
+  const tempFolderName = path.join(tempFolderBase, folderKey);
 
-  const folderKey = message.folderKey;
-  const fileKeys = message.fileKeys;
-  const tempFolderName = `/tmp/${folderKey}`;
+  fs.mkdirSync(tempFolderName, { recursive: true });
 
   // Download file from S3
   console.log('Downloading files from S3...');
-  fs.mkdirSync(tempFolderName, { recursive: true });
-
   const downloadPromises = fileKeys.map(async (fileKey) => {
     const tempFileName = path.join(tempFolderName, path.basename(fileKey));
 
@@ -97,7 +96,7 @@ async function processMessage(message, receiptHandle) {
 
   // Compress file using pigz
   console.log('Compressing downloaded files...');
-  const compressedFolderName = `${tempFolderName}.tar.gz`;
+  const compressedFolderName = `${tempFolderBase}/${folderKey}.tar.gz`;
 
   await new Promise((resolve, reject) => {
     exec(`tar -cf - -C "${path.dirname(tempFolderName)}" "${path.basename(tempFolderName)}" | pigz -9 > "${compressedFolderName}"`, (error) => {
@@ -116,7 +115,7 @@ async function processMessage(message, receiptHandle) {
 
   const uploadParams = {
     Bucket: 'n11069449-compress-store',
-    Key: `${folderKey}.tar.gz`,
+    Key: `${uniqueId}/${folderKey}.tar.gz`,
     Body: compressedReadStream
   };
 
@@ -150,20 +149,13 @@ async function processMessage(message, receiptHandle) {
 
   // Delete locally stored files
   try {
-    fs.rmSync(tempFolderName, { recursive: true, force: true });
+    fs.rmSync(tempFolderBase, { recursive: true, force: true });
     console.log('Local files deleted.');
   } catch (err) {
     console.error(`Error deleting temporary folder: ${err}`);
   }
 
-  // Delete compressed files
-  try {
-    fs.unlinkSync(compressedFolderName);
-    console.log('Compressed file deleted.');
-  }   catch (err) {
-    console.error(`Error deleting compressed file: ${err}`);
-  }
-  
+
   console.log('Processing is complete.');
 }
 
@@ -197,6 +189,6 @@ getQueueUrl().then(url => {
     console.error('Failed to get SQS queue URL', error);
   });
 
-  startWorker().catch(error => {
-    console.error(`Worker failed to start:`, error);
-  });
+startWorker().catch(error => {
+  console.error(`Worker failed to start:`, error);
+});
