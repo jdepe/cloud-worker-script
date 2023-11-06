@@ -26,9 +26,10 @@ async function getQueueUrl() {
     sqs.getQueueUrl(params, (err, data) => {
       if (err) {
         console.error("Error fetching queue URL:", err);
-        return reject(err);
+        reject(err);
+      } else {
+        resolve(data.QueueUrl);
       }
-      resolve(data.QueueUrl);
     });
   });
 }
@@ -159,8 +160,29 @@ async function processMessage(message, receiptHandle) {
   console.log('Processing is complete.');
 }
 
+async function waitForQueue() {
+  while (true) {
+    try {
+      const url = await getQueueUrl();
+      console.log(`Queue found: ${url}`);
+      return url;
+    } catch (error) {
+      if (error.code === 'AWS.SimpleQueueService.NonExistentQueue') {
+        console.log(`Queue not found. Retrying in 5 seconds...`);
+      } else {
+        console.error(`Error fetching queue URL: ${error}`);
+        console.log(`Unexpected error. Retrying in 5 seconds...`);
+      }
+
+      // Wait 5 seconds before trying
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+}
+
 async function startWorker() {
   console.log(`Worker started`);
+  queueUrl = await waitForQueue();
   while (true) {
     try {
       console.log(`Worker polling for messages...`);
@@ -177,18 +199,12 @@ async function startWorker() {
     } catch (error) {
       console.error(`Worker encountered an error:`, error);
     }
-    // Optional: introduce a short delay or backoff strategy if needed
+
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 }
 
-getQueueUrl().then(url => {
-  queueUrl = url;
-})
-  .catch(error => {
-    console.error('Failed to get SQS queue URL', error);
-  });
-
 startWorker().catch(error => {
-  console.error(`Worker failed to start:`, error);
-});
+  console.error('Worker failed to start:', error);
+})
+
