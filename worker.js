@@ -64,7 +64,7 @@ async function processMessage(message, receiptHandle) {
   // After successful operation, delete the message from the queue
   console.log('Message found. Processing now...');
   const { folderKey, fileKeys, uniqueId } = message;
-  const tempFolderBase = `/tmp/${uniqueId}`;
+  const tempFolderBase = `/temp/${uniqueId}`;
   const tempFolderName = path.join(tempFolderBase, folderKey);
 
   fs.mkdirSync(tempFolderName, { recursive: true });
@@ -112,7 +112,7 @@ async function processMessage(message, receiptHandle) {
   // Upload compressed file back to S3
   console.log('Uploading files back to S3...');
   const compressedReadStream = fs.createReadStream(compressedFolderName);
-
+  console.log(folderKey);
   const uploadParams = {
     Bucket: 'n11069449-compress-store',
     Key: `${uniqueId}/${folderKey}.tar.gz`,
